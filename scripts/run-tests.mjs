@@ -40,7 +40,8 @@ const applicationTests = [
   "src/server/sms/payping-providers.test.ts",
 ];
 const migrationTests = [
-  "src/server/db/migration-0502.test.ts", "src/server/db/seed-safety.test.ts", "src/server/db/baseline-public.test.ts",
+  "src/server/db/migration-0502.test.ts", "src/server/db/migration-release-0019.test.ts",
+  "src/server/db/seed-safety.test.ts", "src/server/db/baseline-public.test.ts",
   "src/server/completion/flow.test.ts", "src/server/commerce/checkout-safety.test.ts", "src/server/commerce/batch02.test.ts",
   "src/server/commerce/correction.test.ts", "src/server/auth/admin-bootstrap.test.ts", "src/server/auth/customer-otp.test.ts",
   "src/server/account/addresses.test.ts", "src/server/account/account.test.ts", "src/server/catalog/admin.test.ts",

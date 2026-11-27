@@ -5,11 +5,30 @@
  * This intentionally does not import the application DB singleton or call
  * getPglite(): it verifies the database selected by DATABASE_URL itself.
  */
+import { readdirSync } from "node:fs";
 import pg from "pg";
+import { pendingMigrations } from "./migration-plan.mjs";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {
   console.error("[postgres-smoke] DATABASE_URL is required");
+  process.exit(1);
+}
+
+let target;
+try {
+  target = new URL(databaseUrl);
+} catch {
+  console.error("[postgres-smoke] DATABASE_URL must be a PostgreSQL URL");
+  process.exit(1);
+}
+if (
+  !["postgres:", "postgresql:"].includes(target.protocol) ||
+  !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) ||
+  target.pathname !== "/shahoo_test" ||
+  target.search
+) {
+  console.error("[postgres-smoke] Only the disposable loopback shahoo_test database is accepted");
   process.exit(1);
 }
 
@@ -28,7 +47,12 @@ const requiredTables = [
   "inventory",
   "carts",
   "cart_items",
+  "content_revisions",
+  "order_fulfillment_work",
+  "shipping_logs",
 ];
+const expectedMigrations = pendingMigrations(readdirSync(new URL("../migrations/", import.meta.url)), [])
+  .map(({ name }) => name);
 
 async function main() {
   const client = await pool.connect();
@@ -38,11 +62,15 @@ async function main() {
       throw new Error("PostgreSQL 14 or newer is required");
     }
 
-    const migrations = await client.query(
-      "SELECT count(*)::int AS count FROM _migrations",
-    );
-    if (migrations.rows[0].count < 1) {
-      throw new Error("No applied migrations were recorded in _migrations");
+    const history = await client.query("SELECT name FROM _migrations ORDER BY name");
+    const applied = history.rows.map((row) => row.name).sort();
+    const missingMigrations = expectedMigrations.filter((name) => !applied.includes(name));
+    const unexpectedMigrations = applied.filter((name) => !expectedMigrations.includes(name));
+    if (missingMigrations.length || unexpectedMigrations.length) {
+      throw new Error(
+        "Migration history differs from this checkout. Missing: " + (missingMigrations.join(", ") || "none") +
+        ". Unexpected: " + (unexpectedMigrations.join(", ") || "none"),
+      );
     }
 
     const tables = await client.query(
@@ -52,6 +80,15 @@ async function main() {
     const missing = requiredTables.filter((name) => !present.has(name));
     if (missing.length) {
       throw new Error(`Required application tables are missing: ${missing.join(", ")}`);
+    }
+
+    const snapshotColumns = await client.query(
+      "SELECT count(*)::int AS count FROM information_schema.columns " +
+      "WHERE table_schema = current_schema() AND table_name = 'shipping_logs' " +
+      "AND column_name IN ('sender_snapshot', 'recipient_snapshot') AND data_type = 'jsonb'",
+    );
+    if (snapshotColumns.rows[0].count !== 2) {
+      throw new Error("Shipping logs require both JSONB address snapshot columns");
     }
 
     await client.query("BEGIN");
@@ -71,7 +108,7 @@ async function main() {
     }
 
     console.log(
-      `[postgres-smoke] OK — PostgreSQL ${version.rows[0].version_num}, ${migrations.rows[0].count} migration(s), ${requiredTables.length} required tables, parameterized query and rollback verified`,
+      `[postgres-smoke] OK — PostgreSQL ${version.rows[0].version_num}, ${applied.length} exact migrations, ${requiredTables.length} required tables, shipment snapshots and rollback verified`,
     );
   } finally {
     client.release();

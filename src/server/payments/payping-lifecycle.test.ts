@@ -51,6 +51,17 @@ function callback(input: { clientRefId: string; paymentCode: string; paymentRefI
   });
 }
 
+function providerFormCallback(input: { clientRefId: string; paymentCode: string; paymentRefId: number }) {
+  return new Request("https://shop.example/api/payment/payping/callback", {
+    method: "POST",
+    body: new URLSearchParams({
+      status: "1",
+      errorCode: "",
+      data: JSON.stringify({ ...input, amount: 100, gatewayAmount: 120 }),
+    }),
+  });
+}
+
 function failedCallback(input: { clientRefId: string; paymentCode: string; errorCode: string; amount?: number }) {
   return new Request("https://shop.example/api/payment/payping/callback", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: 0, ...input }),
@@ -143,19 +154,22 @@ test("verification 408 and 429 remain recoverable instead of becoming failed", a
   }
 });
 
-test("duplicate successful PayPing callbacks race but settle one payment exactly once", async () => {
+test("duplicate PayPing form callbacks verify the original amount and settle one payment", { timeout: 10_000 }, async () => {
   const fixture = await attempt("redirect_pending", "duplicate-race");
   const paymentRefId = 244;
   const old = globalThis.fetch;
+  const verifyRequests: unknown[] = [];
   let verificationCalls = 0;
   let releaseBoth!: () => void;
   const bothVerified = new Promise<void>((resolve) => { releaseBoth = resolve; });
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (_input, init) => {
+    verifyRequests.push(JSON.parse(String(init?.body)));
     verificationCalls += 1;
     if (verificationCalls === 2) releaseBoth();
     await bothVerified;
     return new Response(JSON.stringify({
       amount: 100,
+      gatewayAmount: 120,
       paymentRefId,
       clientRefId: fixture.clientRefId,
       code: fixture.paymentCode,
@@ -164,10 +178,14 @@ test("duplicate successful PayPing callbacks race but settle one payment exactly
 
   try {
     const [first, replay] = await Promise.all([
-      handlePayPingCallback(callback({ clientRefId: fixture.clientRefId, paymentCode: fixture.paymentCode, paymentRefId })),
-      handlePayPingCallback(callback({ clientRefId: fixture.clientRefId, paymentCode: fixture.paymentCode, paymentRefId })),
+      handlePayPingCallback(providerFormCallback({ clientRefId: fixture.clientRefId, paymentCode: fixture.paymentCode, paymentRefId })),
+      handlePayPingCallback(providerFormCallback({ clientRefId: fixture.clientRefId, paymentCode: fixture.paymentCode, paymentRefId })),
     ]);
     assert.equal(verificationCalls, 2, "both concurrent callbacks reached provider verification");
+    assert.deepEqual(verifyRequests, [
+      { amount: 100, paymentCode: fixture.paymentCode, paymentRefId },
+      { amount: 100, paymentCode: fixture.paymentCode, paymentRefId },
+    ]);
     assert.equal([first.status, replay.status].every((status) => status === 200 || status === 202), true);
     assert.equal([first.status, replay.status].some((status) => status === 200), true,
       "at least one callback must complete or observe the completed settlement");

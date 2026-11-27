@@ -4,6 +4,8 @@ Verification date: 2026-11-19. No live provider call, production credential, rea
 
 ## PayPing
 
+The current official simple-payment guide explicitly specifies Toman for v3 `amount` and a form-encoded POST body with a JSON string in `data`. The earlier OpenAPI-only conclusion below is historical. The guide is contract evidence. Verify the deployed path with a dedicated test token. [Official simple payment guide](https://payping.ir/help/prdakht-sadh-drgah-prdakht-aintrnti/)
+
 The authoritative sources reviewed were [PayPing API Specification](https://docs.payping.ir/), [PayPing OpenAPI](https://statics.payping.ir/openapi.json), and the [official PayPing WooCommerce integration](https://github.com/payping/plugins-woocommerce) at commit `f2f93ff3adab7d5e63d6cc25d698de00c9f1da90`.
 
 The official WooCommerce integration states that supported store currencies are converted to Toman before sending the order amount. The SHAHOO adapter applies the equivalent strict integer boundary: internal IRR must be positive and divisible by 10, then `amountToman = amountIrr / 10` is persisted and used for creation, callback comparison, and verification. The OpenAPI documents `POST https://api.payping.ir/v3/pay` with Bearer authentication and a JSON `PaymentModel` containing integer `amount`, `returnUrl`, and `clientRefId`. It returns a `PaymentDto` containing `paymentCode`, `url`, and the requested `amount`. The customer is sent to `/v3/pay/start/{paymentCode}`. PayPing posts the return information to the merchant `returnUrl`; the documented callback includes `status`, `clientRefId`, `paymentCode`, `paymentRefId`, and `amount` in the successful data. The implementation therefore treats the callback as untrusted input and performs server-side verification.
